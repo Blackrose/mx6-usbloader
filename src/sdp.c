@@ -25,6 +25,8 @@
 #include <libusb.h>
 #include <sys/param.h>
 
+#include "util.h"
+
 #define FREESCALE_VENDOR_ID     	0x15a2
 #define FREESCALE_PRODUCT_MX6_ID    	0x0054
 
@@ -32,9 +34,10 @@ struct sdp {
 	struct libusb_context		*ctx;
 	struct libusb_device		*dev;
 	struct libusb_device_handle	*h;
+	bool				own_context;
 };
 
-struct sdp *sdp_open(bool (*match)(void *))
+struct sdp *sdp_open(struct sdp_context *info)
 {
 	struct sdp		*sdp;
 	int			rc;
@@ -47,12 +50,20 @@ struct sdp *sdp_open(bool (*match)(void *))
 	if (!sdp)
 		return NULL;
 
-	rc = libusb_init(&sdp->ctx);
-	if (rc != 0) {
-		fprintf(stderr, "libusb_init(): %s\n", libusb_error_name(rc));
-		goto err;
+	if (info && info->usb) {
+		sdp->ctx = info->usb;
+		sdp->own_context = false;
+	} else {
+		rc = libusb_init(&sdp->ctx);
+		if (rc != 0) {
+			fprintf(stderr, "libusb_init(): %s\n", libusb_error_name(rc));
+			goto err;
+		}
+
+		sdp->own_context = true;
 	}
 
+again:
 	dev_list_cnt = libusb_get_device_list(sdp->ctx, &dev_list);
 	if (dev_list_cnt < 0) {
 		fprintf(stderr, "libusb_get_device_list(): %s\n",
@@ -82,7 +93,12 @@ struct sdp *sdp_open(bool (*match)(void *))
 
 	libusb_free_device_list(dev_list, 1);
 
-	if (!sdp->dev) {
+	if (sdp->dev) {
+		; /* noop */
+	} else if (info && info->wait_for_device && 
+		   info->wait_for_device(info)) {
+		goto again;
+	} else {
 		fprintf(stderr, "no mx6 device found\n");
 		goto err;
 	}
@@ -117,7 +133,7 @@ err:
 	if (sdp->dev)
 		libusb_unref_device(sdp->dev);
 
-	if (sdp->ctx)
+	if (sdp->ctx && sdp->own_context)
 		libusb_exit(sdp->ctx);
 
 	free(sdp);
@@ -132,7 +148,9 @@ void	sdp_close(struct sdp *sdp)
 	libusb_release_interface(sdp->h, 0);
 	libusb_close(sdp->h);
 	libusb_unref_device(sdp->dev);
-	libusb_exit(sdp->ctx);
+
+	if (sdp->own_context)
+		libusb_exit(sdp->ctx);
 
 	free(sdp);
 }
@@ -242,7 +260,7 @@ static bool sdp_verify_sec_report3(struct sdp *sdp, uint32_t val)
 	return true;
 }
 
-static bool sdp_get_data_report4(struct sdp *sdp, void *dst, size_t cnt)
+static bool _sdp_get_data_report4(struct sdp *sdp, void *dst, size_t cnt)
 {
 	struct {
 		be8_t	id;
@@ -282,65 +300,73 @@ static bool sdp_get_data_report4(struct sdp *sdp, void *dst, size_t cnt)
 	return true;
 }
 
-bool	sdp_read_regb(struct sdp *sdp, uint32_t addr, uint8_t *val)
+static bool sdp_get_data_report4(struct sdp *sdp, void *dst, size_t cnt)
 {
-	struct sdp_data_report1		rep = {
-		.id		= 1,
-		.cmd		= htobe16(0x0101), /* READ_REGISTER */
-		.address	= htobe32(addr),
-		.count		= htobe32(1),
-		.format		= 8,
-	};
-	uint32_t			tmp;
+	while (cnt > 0) {
+		size_t	l = MIN(64u, cnt);
 
-	if (!sdp_write_data_report1(sdp, &rep) ||
-	    !sdp_verify_sec_report3(sdp, 0x56787856) ||
-	    !sdp_get_data_report4(sdp, &tmp, 4))
-		return false;
+		if (!_sdp_get_data_report4(sdp, dst, l))
+			return false;
 
-	*val = be32toh(tmp) >> 24;
+		dst += l;
+		cnt -= l;
+	}
 
 	return true;
 }
 
-bool	sdp_read_regw(struct sdp *sdp, uint32_t addr, uint16_t *val)
+static bool _sdp_read_reg(struct sdp *sdp, uint32_t addr, void *dst,
+			  size_t elem_sz, size_t cnt)
 {
 	struct sdp_data_report1		rep = {
 		.id		= 1,
 		.cmd		= htobe16(0x0101), /* READ_REGISTER */
 		.address	= htobe32(addr),
-		.count		= htobe32(2),
-		.format		= 16,
+		.count		= htobe32(elem_sz * cnt),
+		.format		= elem_sz * 8,
 	};
-	uint32_t			tmp;
+
+	if (cnt == 0)
+		return true;
 
 	if (!sdp_write_data_report1(sdp, &rep) ||
 	    !sdp_verify_sec_report3(sdp, 0x56787856) ||
-	    !sdp_get_data_report4(sdp, &tmp, 4))
+	    !sdp_get_data_report4(sdp, dst, cnt * elem_sz))
 		return false;
-
-	*val = be32toh(tmp) >> 16;
 
 	return true;
 }
 
-bool	sdp_read_regl(struct sdp *sdp, uint32_t addr, uint32_t *val)
+bool sdp_read_regb(struct sdp *sdp, uint32_t addr, uint8_t val[], size_t cnt)
 {
-	struct sdp_data_report1		rep = {
-		.id		= 1,
-		.cmd		= htobe16(0x0101), /* READ_REGISTER */
-		.address	= htobe32(addr),
-		.count		= htobe32(4),
-		.format		= 32,
-	};
-	uint32_t			tmp;
-
-	if (!sdp_write_data_report1(sdp, &rep) ||
-	    !sdp_verify_sec_report3(sdp, 0x56787856) ||
-	    !sdp_get_data_report4(sdp, &tmp, 4))
+	if (!_sdp_read_reg(sdp, addr, val, sizeof val[0], cnt))
 		return false;
 
-	*val = be32toh(tmp) >> 0;
+	return true;
+}
+
+bool sdp_read_regw(struct sdp *sdp, uint32_t addr, uint16_t val[], size_t cnt)
+{
+	size_t		i;
+
+	if (!_sdp_read_reg(sdp, addr, val, sizeof val[0], cnt))
+		return false;
+
+	for (i = 0; i < cnt; ++i)
+		val[i] = be16toh(val[i]);
+
+	return true;
+}
+
+bool sdp_read_regl(struct sdp *sdp, uint32_t addr, uint32_t val[], size_t cnt)
+{
+	size_t		i;
+
+	if (!_sdp_read_reg(sdp, addr, val, sizeof val[0], cnt))
+		return false;
+
+	for (i = 0; i < cnt; ++i)
+		val[i] = be32toh(val[i]);
 
 	return true;
 }
@@ -391,14 +417,14 @@ bool	sdp_write_dcd(struct sdp *sdp, void const *dcd, size_t len)
 {
 	struct sdp_data_report1		rep = {
 		.id		= 1,
-		.cmd		= htobe16(0x0a0a), /* WRITE_FILE */
+		.cmd		= htobe16(0x0a0a), /* DCD_WRITE */
 		.address	= htobe32(0x00907000),
 		.count		= htobe32(len),
 	};
 	uint32_t		tmp;
 
-	if (len > 1024) {
-		fprintf(stderr, "DCD too large\n");
+	if (len > 1768) {
+		fprintf(stderr, "DCD too large (%zu)\n", len);
 		return false;
 	}
 

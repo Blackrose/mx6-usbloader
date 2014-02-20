@@ -21,56 +21,21 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-#ifndef __packed
-#  define __packed	__attribute__((__packed__))
-#endif
-
-typedef uint8_t		be8_t;
-typedef uint16_t	be16_t;
-typedef uint32_t	be32_t;
-
 struct sdp;
+struct libusb_context;
 
-struct sdp_dcd_hdr {
-	uint8_t	tag;
-	be16_t	length;
-	uint8_t	version;
-} __packed;
-
-struct sdp_dcd_buffer {
-	struct sdp_dcd_hdr	hdr;
-	uint8_t			data[];
-} __packed;
-
-struct sdp_dcd {
-	struct sdp_dcd_buffer	*buf;
-	size_t			sz;
-	size_t			allocated;
+struct sdp_context {
+	struct libusb_context	*usb;
+	bool			(*match)(struct sdp_context *, void *);
+	bool			(*wait_for_device)(struct sdp_context *);
 };
 
-struct sdp_dcd_write_data {
-	uint32_t		addr;
-	uint32_t		val_mask;
-};
-
-bool	sdp_dcd_init(struct sdp_dcd *dcd);
-bool	sdp_dcd_free(struct sdp_dcd *dcd);
-bool	sdp_dcd_data(struct sdp_dcd *dcd, uint8_t flags,
-		     struct sdp_dcd_write_data const *data,
-		     size_t cnt);
-bool	sdp_dcd_check(struct sdp_dcd *dcd, uint8_t flags,
-		      uint32_t address, uint32_t mask, uint32_t count);
-bool	sdp_dcd_nop(struct sdp_dcd *dcd);
-bool	sdp_dcd_unlock(struct sdp_dcd *dcd, uint8_t eng,
-		       uint32_t const values[], size_t cnt);
-
-
-struct sdp	*sdp_open(bool (*match)(void *));
+struct sdp *sdp_open(struct sdp_context *info);
 void	sdp_close(struct sdp *sdp);
 
-bool	sdp_read_regb(struct sdp *, uint32_t addr, uint8_t *val);
-bool	sdp_read_regw(struct sdp *, uint32_t addr, uint16_t *val);
-bool	sdp_read_regl(struct sdp *, uint32_t addr, uint32_t *val);
+bool	sdp_read_regb(struct sdp *, uint32_t addr, uint8_t val[], size_t cnt);
+bool	sdp_read_regw(struct sdp *, uint32_t addr, uint16_t val[], size_t cnt);
+bool	sdp_read_regl(struct sdp *, uint32_t addr, uint32_t val[], size_t cnt);
 
 bool	sdp_read_writeb(struct sdp *, uint8_t val, uint32_t addr);
 bool	sdp_read_writew(struct sdp *, uint16_t val, uint32_t addr);

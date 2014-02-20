@@ -22,8 +22,14 @@
 
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <stdio.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+
+#include <libudev.h>
+
+#include "util.h"
 
 //#define addr	0x10000000
 #define addr	0x00907000
@@ -50,12 +56,99 @@ struct dcd {
 	uint8_t		data[];
 } __packed;
 
+struct mx6_info {
+	struct sdp_context	sdp;
+	struct udev		*udev;
+	struct udev_monitor	*udev_monitor;
+};
+
+static bool wait_for_device(struct sdp_context *info)
+{
+	struct mx6_info		*mx6 = container_of(info, struct mx6_info, sdp);
+	struct udev_monitor	*mon = NULL;
+	bool			rc = false;
+
+	if (!mx6->udev)
+		/* \todo: only sleep in this case? */
+		mon = NULL;
+	else if (!mx6->udev_monitor)
+		mon = udev_monitor_new_from_netlink(mx6->udev, "udev");
+	else
+		mon = udev_monitor_ref(mx6->udev_monitor);
+
+	if (!mon) {
+		; /* noop */
+	} else if (!mx6->udev_monitor) {
+		/* first wait cycle; we are not listening on udev events yet
+		 * and might run into a race.  Initialize listener only and
+		 * return immediately. */
+		if (udev_monitor_filter_add_match_subsystem_devtype(
+			    mon, "hid", NULL) < 0 ||
+		    udev_monitor_filter_update(mon) < 0 ||
+		    udev_monitor_enable_receiving(mon) < 0)
+			goto out;
+
+		mx6->udev_monitor = udev_monitor_ref(mon);
+		rc = true;
+	} else {
+		struct udev_device	*dev;
+		int			fd;
+		fd_set			fds;
+
+		fd = udev_monitor_get_fd(mon);
+		if (fd < 0)
+			goto out;
+
+		FD_ZERO(&fds);
+		FD_SET(fd, &fds);
+		select(fd + 1, &fds, NULL, NULL, NULL);
+
+		dev = udev_monitor_receive_device(mon);
+		if (!dev)
+			goto out;
+
+		udev_device_unref(dev);
+		rc = true;
+	}
+
+out:
+	if (mon)
+		udev_monitor_unref(mon);
+
+	return rc;
+}
+
 int main(int argc, char *argv[])
 {
-	struct sdp *sdp = sdp_open(NULL);
-	int		fd = open(argv[1], O_RDONLY);
-	struct stat	st;
-	void		*data;
+	struct stat		st;
+	void			*data;
+
+	struct mx6_info		mx6 = {
+		.sdp	= {
+			.wait_for_device = wait_for_device,
+		},
+		.udev	= udev_new(),
+	};
+
+	struct sdp		*sdp = sdp_open(&mx6.sdp);
+	int			fd;
+
+	if (mx6.udev_monitor)
+		udev_monitor_unref(mx6.udev_monitor);
+
+	if (mx6.udev)
+		udev_unref(mx6.udev);
+
+	if (getuid() != geteuid()) {
+		uid_t	id = getuid();
+
+		if (setresuid(id, id, id) < 0) {
+			perror("setresuid()");
+			return EXIT_FAILURE;
+		}
+	}
+
+	fd = open(argv[1], O_RDONLY);
 
 #if 0
 	struct ivt	ivt = {
@@ -96,11 +189,19 @@ int main(int argc, char *argv[])
 	dcd = data + 0x400 + le32toh(ivt->dcd) - le32toh(ivt->self);
 	dcd_len = (be32toh(dcd->header) >> 8) & 0xffff;
 
+
+	printf("Uploading image...");
+
+	printf(" DCD[%zu]", dcd_len);
+	fflush(stdout);
+
 	if (!sdp_write_dcd(sdp, dcd, dcd_len))
 		abort();
 
 	ivt->dcd = 0;
 
+	printf(" FILE[%08x+%zu]", le32toh(ivt->self) - 0x400, st.st_size);
+	fflush(stdout);
 	if (!sdp_write_file(sdp, le32toh(ivt->self) - 0x400, data, st.st_size) ||
 	    !sdp_jump(sdp, le32toh(ivt->self)))
 		abort();
@@ -121,4 +222,6 @@ int main(int argc, char *argv[])
 
 
 	sdp_close(sdp);
+
+	printf(" done\n");
 }
