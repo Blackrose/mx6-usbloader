@@ -39,3 +39,6 @@ mx6-usbload:	$(mx6-usbload_SOURCES)
 
 dist:
 	${TAR} cJf mx6-usbloader.tar.xz $(sort ${SOURCES}) --transform='s!^!mx6-usbloader/!' --owner root --group root --mode go-w,a+rX
+
+clean:
+	rm -f mx6-usbload
