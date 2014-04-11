@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
+#include <sysexits.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 
@@ -129,9 +130,9 @@ int main(int argc, char *argv[])
 		},
 		.udev	= udev_new(),
 	};
+	int			fd;
 
 	struct sdp		*sdp = sdp_open(&mx6.sdp);
-	int			fd;
 
 	if (mx6.udev_monitor)
 		udev_monitor_unref(mx6.udev_monitor);
@@ -139,16 +140,23 @@ int main(int argc, char *argv[])
 	if (mx6.udev)
 		udev_unref(mx6.udev);
 
+	if (!sdp)
+		return EX_UNAVAILABLE;
+
 	if (getuid() != geteuid()) {
 		uid_t	id = getuid();
 
 		if (setresuid(id, id, id) < 0) {
 			perror("setresuid()");
-			return EXIT_FAILURE;
+			return EX_OSERR;
 		}
 	}
 
 	fd = open(argv[1], O_RDONLY);
+	if (fd < 0) {
+		fprintf(stderr, "failed to open '%s': %m\n", argv[1]);
+		return EX_NOINPUT;
+	}
 
 #if 0
 	struct ivt	ivt = {
@@ -169,22 +177,29 @@ int main(int argc, char *argv[])
 
 //	uint32_t	tmp;
 
-	if (!sdp || fd < 0)
-		abort();
-
-	if (fstat(fd, &st) < 0)
-		abort();
+	if (fstat(fd, &st) < 0) {
+		perror("fstat()");
+		return EX_OSERR;
+	}
 
 //	bdata.length = htobe32(st.st_size);
 
 	data = mmap(NULL, st.st_size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
-	if (data == MAP_FAILED)
-		abort();
+	if (data == MAP_FAILED) {
+		perror("mmap()");
+		return EX_OSERR;
+	}
 
 	ivt = data + 0x400;
 	if (le32toh(ivt->dcd) < le32toh(ivt->self) ||
-	    le32toh(ivt->dcd) - le32toh(ivt->self) > st.st_size)
-		abort();
+	    le32toh(ivt->dcd) - le32toh(ivt->self) > st.st_size) {
+		fprintf(stderr,
+			"invalid IVT settings: self=%#08x, dcd=%#08x, size=%#08llx\n",
+			(unsigned int)le32toh(ivt->self),
+			(unsigned int)le32toh(ivt->dcd),
+			(unsigned long long)st.st_size);
+		return EX_DATAERR;
+	}
 
 	dcd = data + 0x400 + le32toh(ivt->dcd) - le32toh(ivt->self);
 	dcd_len = (be32toh(dcd->header) >> 8) & 0xffff;
@@ -196,7 +211,7 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 
 	if (!sdp_write_dcd(sdp, dcd, dcd_len))
-		abort();
+		return EX_OSERR;
 
 	ivt->dcd = 0;
 
@@ -204,14 +219,14 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 	if (!sdp_write_file(sdp, le32toh(ivt->self) - 0x400, data, st.st_size) ||
 	    !sdp_jump(sdp, le32toh(ivt->self)))
-		abort();
+		return EX_OSERR;
 
 #if 0
 	if (!sdp_write_file(sdp, addr, &ivt, sizeof ivt) ||
 	    !sdp_write_file(sdp, addr + sizeof ivt, &bdata, sizeof bdata) ||
 	    !sdp_write_file(sdp, addr + 0x100, data, st.st_size) ||
 	    !sdp_jump(sdp, addr))
-		abort();
+		return EX_OSERR;
 #endif
 
 #if 0
