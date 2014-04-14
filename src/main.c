@@ -174,6 +174,7 @@ int main(int argc, char *argv[])
 	struct ivt	*ivt;
 	struct dcd	*dcd;
 	size_t		dcd_len;
+	size_t		fsize;
 
 //	uint32_t	tmp;
 
@@ -182,6 +183,7 @@ int main(int argc, char *argv[])
 		return EX_OSERR;
 	}
 
+	fsize = st.st_size;
 //	bdata.length = htobe32(st.st_size);
 
 	data = mmap(NULL, st.st_size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
@@ -192,12 +194,12 @@ int main(int argc, char *argv[])
 
 	ivt = data + 0x400;
 	if (le32toh(ivt->dcd) < le32toh(ivt->self) ||
-	    le32toh(ivt->dcd) - le32toh(ivt->self) > st.st_size) {
+	    le32toh(ivt->dcd) - le32toh(ivt->self) > fsize) {
 		fprintf(stderr,
-			"invalid IVT settings: self=%#08x, dcd=%#08x, size=%#08llx\n",
+			"invalid IVT settings: self=%#08x, dcd=%#08x, size=%#08zx\n",
 			(unsigned int)le32toh(ivt->self),
 			(unsigned int)le32toh(ivt->dcd),
-			(unsigned long long)st.st_size);
+			fsize);
 		return EX_DATAERR;
 	}
 
@@ -215,7 +217,7 @@ int main(int argc, char *argv[])
 
 	ivt->dcd = 0;
 
-	printf(" FILE[%08x+%zu]", le32toh(ivt->self) - 0x400, st.st_size);
+	printf(" FILE[%08x+%zu]", le32toh(ivt->self) - 0x400, fsize);
 	fflush(stdout);
 	if (!sdp_write_file(sdp, le32toh(ivt->self) - 0x400, data, st.st_size) ||
 	    !sdp_jump(sdp, le32toh(ivt->self)))
