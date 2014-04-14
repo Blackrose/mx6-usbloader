@@ -21,6 +21,9 @@ VPATH += $(abs_top_srcdir)
 
 bin_PROGRAMS = mx6-usbload
 
+prefix = /usr/local
+bindir = ${prefix}/bin
+
 mx6-usbload_SOURCES = \
 	src/main.c \
 	src/sdp.c \
@@ -38,6 +41,11 @@ _buildflags = $(foreach k,CPP $1 LD, $(AM_$kFLAGS) $($kFLAGS) $($kFLAGS_$@))
 
 mx6-usbload:	$(mx6-usbload_SOURCES)
 	$(CC) $(call _buildflags,C) $(filter %.c,$^) -o $@ $(LIBS_$@)
+
+install:	.install-mx6-usbload
+
+.install-mx6-usbload:	mx6-usbload
+	install -D -p -m 0755 $< $(DESTDIR)${bindir}/mx6-usbload
 
 dist:
 	${TAR} cJf mx6-usbloader-${VERSION}.tar.xz $(sort ${SOURCES}) --transform='s!^!mx6-usbloader-${VERSION}/!' --owner root --group root --mode go-w,a+rX
