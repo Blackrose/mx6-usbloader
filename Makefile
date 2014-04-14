@@ -1,3 +1,5 @@
+VERSION		 = 0.1
+
 PKG_CONFIG	?= pkg-config
 TAR		?= tar
 
@@ -38,7 +40,7 @@ mx6-usbload:	$(mx6-usbload_SOURCES)
 	$(CC) $(call _buildflags,C) $(filter %.c,$^) -o $@ $(LIBS_$@)
 
 dist:
-	${TAR} cJf mx6-usbloader.tar.xz $(sort ${SOURCES}) --transform='s!^!mx6-usbloader/!' --owner root --group root --mode go-w,a+rX
+	${TAR} cJf mx6-usbloader-${VERSION}.tar.xz $(sort ${SOURCES}) --transform='s!^!mx6-usbloader-${VERSION}/!' --owner root --group root --mode go-w,a+rX
 
 clean:
 	rm -f mx6-usbload
