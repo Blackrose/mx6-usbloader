@@ -49,4 +49,6 @@ bool	sdp_write_dcd(struct sdp *, void const *dcd, size_t len);
 
 bool	sdp_jump(struct sdp *, uint32_t addr);
 
+char const	*sdp_get_devpath(struct sdp *);
+
 #endif	/* H_MX6_LOAD_SDP_H */

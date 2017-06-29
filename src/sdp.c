@@ -456,3 +456,31 @@ bool	sdp_jump(struct sdp *sdp, uint32_t addr)
 	return true;
 }
 
+char const *sdp_get_devpath(struct sdp *sdp)
+{
+	uint8_t		ports[8];
+	int		num_ports;
+	char		*path;
+	char		*ptr;
+
+	if (sdp->devpath)
+		return sdp->devpath;
+
+	if (!sdp->dev)
+		return NULL;
+
+	num_ports = libusb_get_port_numbers(sdp->dev, ports, 8);
+	if (num_ports < 0)
+		return NULL;
+
+	path = malloc(num_ports * (sizeof "XXX." - 1));
+	if (!path)
+		return NULL;
+
+	ptr = path;
+	for (int i = 0; i < num_ports; ++i)
+		ptr += sprintf(ptr, "%s%u", i == 0 ? "" : ".", ports[i]);
+
+	sdp->devpath = path;
+	return sdp->devpath;
+}

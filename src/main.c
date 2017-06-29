@@ -278,8 +278,7 @@ int main(int argc, char *argv[])
 	dcd = data + le32toh(ivt->dcd) - self_addr;
 	dcd_len = (be32toh(dcd->header) >> 8) & 0xffff;
 
-
-	printf("Uploading image...");
+	printf("Uploading image to %s...", sdp_get_devpath(sdp));
 
 	printf(" DCD[%zu]", dcd_len);
 	fflush(stdout);
