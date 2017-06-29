@@ -243,13 +243,13 @@ int main(int argc, char *argv[])
 	}
 
 	fsize = st.st_size;
-	if (offset > st.st_size) {
-		fprintf(stderr, "offset %u out of file (%lu)\n",
-			offset, (unsigned long)st.st_size);
+	if (offset > fsize) {
+		fprintf(stderr, "offset %u out of file (%zu)\n",
+			offset, fsize);
 		return EX_DATAERR;
 	}
 
-	data = mmap(NULL, st.st_size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
+	data = mmap(NULL, fsize, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
 	if (data == MAP_FAILED) {
 		perror("mmap()");
 		return EX_OSERR;
@@ -290,14 +290,14 @@ int main(int argc, char *argv[])
 
 	printf(" FILE[%08lx+%zu]", self_addr, fsize);
 	fflush(stdout);
-	if (!sdp_write_file(sdp, self_addr, data, st.st_size) ||
+	if (!sdp_write_file(sdp, self_addr, data, fsize) ||
 	    !sdp_jump(sdp, self_addr + offset))
 		return EX_OSERR;
 
 #if 0
 	if (!sdp_write_file(sdp, addr, &ivt, sizeof ivt) ||
 	    !sdp_write_file(sdp, addr + sizeof ivt, &bdata, sizeof bdata) ||
-	    !sdp_write_file(sdp, addr + 0x100, data, st.st_size) ||
+	    !sdp_write_file(sdp, addr + 0x100, data, fsize) ||
 	    !sdp_jump(sdp, addr))
 		return EX_OSERR;
 #endif
