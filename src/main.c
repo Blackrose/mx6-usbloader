@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
+#include <getopt.h>
 #include <sysexits.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -32,8 +33,18 @@
 
 #include "util.h"
 
-//#define addr	0x10000000
-#define addr	0x00907000
+enum {
+	CMD_HELP = 0x1000,
+	CMD_VERSION,
+};
+
+static struct option const		CMDLINE_OPTIONS[] = {
+	{ "help",         no_argument,       0, CMD_HELP },
+	{ "version",      no_argument,       0, CMD_VERSION },
+	{ "offset",       required_argument, 0, 'o' },
+	{ "addr",         required_argument, 0, 'a' },
+	{ NULL, 0, 0, 0 }
+};
 
 struct ivt {
 	uint32_t	header;
@@ -62,6 +73,18 @@ struct mx6_info {
 	struct udev		*udev;
 	struct udev_monitor	*udev_monitor;
 };
+
+static void show_help(void)
+{
+	printf("Usage: mx6-usbload [--offset|-o <ofs>] <file>\n");
+	exit(0);
+}
+
+static void show_version(void)
+{
+	/* \todo: implement me */
+	exit(0);
+}
 
 static bool wait_for_device(struct sdp_context *info)
 {
@@ -119,19 +142,13 @@ out:
 	return rc;
 }
 
-int main(int argc, char *argv[])
-{
-	struct stat		st;
-	void			*data;
-
+static struct sdp *create_sdp(void) {
 	struct mx6_info		mx6 = {
 		.sdp	= {
 			.wait_for_device = wait_for_device,
 		},
 		.udev	= udev_new(),
 	};
-	int			fd;
-
 	struct sdp		*sdp = sdp_open(&mx6.sdp);
 
 	if (mx6.udev_monitor)
@@ -140,6 +157,46 @@ int main(int argc, char *argv[])
 	if (mx6.udev)
 		udev_unref(mx6.udev);
 
+	return sdp;
+}
+
+int main(int argc, char *argv[])
+{
+	struct stat		st;
+	void			*data;
+	unsigned int		offset = 0x400;
+	unsigned long		addr = 0x00907000;
+	unsigned long		self_addr;
+	struct sdp		*sdp;
+	char const		*file_name;
+	int			fd;
+
+	while (1) {
+		int         c = getopt_long(argc, argv, "o:a:",
+					    CMDLINE_OPTIONS, NULL);
+
+		if (c==-1)
+			break;
+
+		switch (c) {
+		case CMD_HELP     :  show_help();
+		case CMD_VERSION  :  show_version();
+		case 'o'	  :  offset = strtoul(optarg, NULL, 0); break;
+		case 'a'	  :  addr   = strtoul(optarg, NULL, 0); break;
+		default:
+			fprintf(stderr, "Try --help for more information\n");
+			return EX_USAGE;
+		}
+	}
+
+	if (optind >= argc) {
+		fprintf(stderr, "missing filename\n");
+		return EX_USAGE;
+	}
+
+	file_name = argv[optind];
+
+	sdp = create_sdp();
 	if (!sdp)
 		return EX_UNAVAILABLE;
 
@@ -152,9 +209,9 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	fd = open(argv[1], O_RDONLY);
+	fd = open(file_name, O_RDONLY);
 	if (fd < 0) {
-		fprintf(stderr, "failed to open '%s': %m\n", argv[1]);
+		fprintf(stderr, "failed to open '%s': %m\n", file_name);
 		return EX_NOINPUT;
 	}
 
@@ -169,6 +226,8 @@ int main(int argc, char *argv[])
 	struct bdata	bdata = {
 		.start	= htole32(addr + 0x100),
 	};
+#else
+	(void)addr;
 #endif
 
 	struct ivt	*ivt;
@@ -184,7 +243,11 @@ int main(int argc, char *argv[])
 	}
 
 	fsize = st.st_size;
-//	bdata.length = htobe32(st.st_size);
+	if (offset > st.st_size) {
+		fprintf(stderr, "offset %u out of file (%lu)\n",
+			offset, (unsigned long)st.st_size);
+		return EX_DATAERR;
+	}
 
 	data = mmap(NULL, st.st_size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
 	if (data == MAP_FAILED) {
@@ -192,9 +255,11 @@ int main(int argc, char *argv[])
 		return EX_OSERR;
 	}
 
-	ivt = data + 0x400;
-	if (le32toh(ivt->dcd) < le32toh(ivt->self) ||
-	    le32toh(ivt->dcd) - le32toh(ivt->self) > fsize) {
+	ivt = data + offset;
+	self_addr = le32toh(ivt->self);
+
+	if (le32toh(ivt->dcd) < self_addr ||
+	    le32toh(ivt->dcd) - self_addr > fsize) {
 		fprintf(stderr,
 			"invalid IVT settings: self=%#08x, dcd=%#08x, size=%#08zx\n",
 			(unsigned int)le32toh(ivt->self),
@@ -203,7 +268,14 @@ int main(int argc, char *argv[])
 		return EX_DATAERR;
 	}
 
-	dcd = data + 0x400 + le32toh(ivt->dcd) - le32toh(ivt->self);
+	if (self_addr < offset) {
+		fprintf(stderr, "ivt->self=%lx in padding (%x)\n",
+			self_addr, offset);
+		return EX_DATAERR;
+	}
+
+	self_addr -= offset;
+	dcd = data + le32toh(ivt->dcd) - self_addr;
 	dcd_len = (be32toh(dcd->header) >> 8) & 0xffff;
 
 
@@ -217,10 +289,10 @@ int main(int argc, char *argv[])
 
 	ivt->dcd = 0;
 
-	printf(" FILE[%08x+%zu]", le32toh(ivt->self) - 0x400, fsize);
+	printf(" FILE[%08lx+%zu]", self_addr, fsize);
 	fflush(stdout);
-	if (!sdp_write_file(sdp, le32toh(ivt->self) - 0x400, data, st.st_size) ||
-	    !sdp_jump(sdp, le32toh(ivt->self)))
+	if (!sdp_write_file(sdp, self_addr, data, st.st_size) ||
+	    !sdp_jump(sdp, self_addr + offset))
 		return EX_OSERR;
 
 #if 0
