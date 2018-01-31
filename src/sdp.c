@@ -30,11 +30,29 @@
 #define FREESCALE_VENDOR_ID     	0x15a2
 #define FREESCALE_PRODUCT_MX6_ID    	0x0054
 
+struct sdp_cpu_info {
+	char const		*name;
+	uint32_t		dcd_addr;
+};
+
 struct sdp {
 	struct libusb_context		*ctx;
 	struct libusb_device		*dev;
 	struct libusb_device_handle	*h;
 	bool				own_context;
+	struct sdp_cpu_info const	*cpu_info;
+};
+
+enum {
+	SDP_CPU_IMX7,
+	SDP_CPU_IMX6,
+};
+
+static struct sdp_cpu_info const	CPU_INFO[] = {
+	[SDP_CPU_IMX6] = {
+		.name		= "i.MX 6",
+		.dcd_addr	= 0x00907000,
+	},
 };
 
 struct sdp *sdp_open(struct sdp_context *info)
@@ -45,6 +63,7 @@ struct sdp *sdp_open(struct sdp_context *info)
 	struct libusb_device	**dev_list = NULL;
 	size_t			i;
 	bool			claimed = false;
+	struct sdp_cpu_info const	*cpu_info = NULL;
 
 	sdp = calloc(1, sizeof *sdp);
 	if (!sdp)
@@ -82,15 +101,28 @@ again:
 			continue;
 		}
 
-		if (desc.idVendor != FREESCALE_VENDOR_ID &&
-		    desc.idProduct != FREESCALE_PRODUCT_MX6_ID)
+		if (desc.idVendor != FREESCALE_VENDOR_ID)
 			continue;
+
+		switch (desc.idProduct) {
+		case FREESCALE_PRODUCT_MX6_ID:
+			cpu_info = &CPU_INFO[SDP_CPU_IMX6];
+			break;
+
+		default:
+			fprintf(stderr,
+				"unknown cpu %04x detected; assuming i.MX6\n",
+				desc.idProduct);
+			cpu_info = &CPU_INFO[SDP_CPU_IMX6];
+			break;
+		}
 
 		/* \todo: call match() */
 
 		sdp->dev = libusb_ref_device(dev);
 	}
 
+	sdp->cpu_info = cpu_info;
 	libusb_free_device_list(dev_list, 1);
 
 	if (sdp->dev) {
@@ -418,7 +450,7 @@ bool	sdp_write_dcd(struct sdp *sdp, void const *dcd, size_t len)
 	struct sdp_data_report1		rep = {
 		.id		= 1,
 		.cmd		= htobe16(0x0a0a), /* DCD_WRITE */
-		.address	= htobe32(0x00907000),
+		.address	= htobe32(sdp->cpu_info->dcd_addr),
 		.count		= htobe32(len),
 	};
 	uint32_t		tmp;
