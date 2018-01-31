@@ -179,8 +179,8 @@ int main(int argc, char *argv[])
 			break;
 
 		switch (c) {
-		case CMD_HELP     :  show_help();
-		case CMD_VERSION  :  show_version();
+		case CMD_HELP     :  show_help(); break;
+		case CMD_VERSION  :  show_version(); break;
 		case 'o'	  :  offset = strtoul(optarg, NULL, 0); break;
 		case 'a'	  :  addr   = strtoul(optarg, NULL, 0); break;
 		default:
