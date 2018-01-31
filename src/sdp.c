@@ -29,6 +29,7 @@
 
 #define FREESCALE_VENDOR_ID     	0x15a2
 #define FREESCALE_PRODUCT_MX6_ID    	0x0054
+#define FREESCALE_PRODUCT_MX7_ID    	0x0076
 
 struct sdp_cpu_info {
 	char const		*name;
@@ -53,6 +54,10 @@ static struct sdp_cpu_info const	CPU_INFO[] = {
 	[SDP_CPU_IMX6] = {
 		.name		= "i.MX 6",
 		.dcd_addr	= 0x00907000,
+	},
+	[SDP_CPU_IMX7] = {
+		.name		= "i.MX 7",
+		.dcd_addr	= 0x00910000,
 	},
 };
 
@@ -108,6 +113,10 @@ again:
 		switch (desc.idProduct) {
 		case FREESCALE_PRODUCT_MX6_ID:
 			cpu_info = &CPU_INFO[SDP_CPU_IMX6];
+			break;
+
+		case FREESCALE_PRODUCT_MX7_ID:
+			cpu_info = &CPU_INFO[SDP_CPU_IMX7];
 			break;
 
 		default:
