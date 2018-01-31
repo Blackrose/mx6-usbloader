@@ -40,6 +40,7 @@ struct sdp {
 	struct libusb_device		*dev;
 	struct libusb_device_handle	*h;
 	bool				own_context;
+	char const			*devpath;
 	struct sdp_cpu_info const	*cpu_info;
 };
 
@@ -184,6 +185,7 @@ void	sdp_close(struct sdp *sdp)
 	if (sdp->own_context)
 		libusb_exit(sdp->ctx);
 
+	free((void *)sdp->devpath);
 	free(sdp);
 }
 
